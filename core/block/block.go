@@ -231,13 +231,9 @@ func (b *Block) EmptyProto() proto.Message {
 	return &pb.Block{}
 }
 
-func (b *Block) Seal(votes []*CommitVote, set []types.Address, quorum int) error {
+func (b *Block) Seal(votes []*CommitVote, set []types.Address) error {
 	if b.Tail != nil {
 		return fmt.Errorf("block tail is already set")
-	}
-
-	if len(votes) < quorum {
-		return fmt.Errorf("not enough commit votes in tail")
 	}
 
 	for _, v := range votes {

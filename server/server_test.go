@@ -333,13 +333,14 @@ func TestServer_ProcessConsensusMessage(t *testing.T) {
 	cd := pbft.NewPbftConsensusMessageCodec()
 	cf := pbft.NewPbftConsensusEngineFactory()
 	pp := GenerateMockPeerProvider()
+	sc := GenerateMockSynchronizer()
 	l := util.LoggerWithPrefixes("Server")
 
 	s := &Server{
 		state: types.NewAtomicNumber[ServerState](Online),
 	}
 
-	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb)
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb).WithSynchronizer(sc)
 	bo := NewBlockchainOptions().WithChain(bc, 0).WithVirtualMemoryPool(mp, mpCap).WithProcessor(pc)
 	co := NewConsensusOptions().WithConsensusEngineFactory(cf).WithConsensusMessageCodec(cd)
 	so := NewServerOptions(true).WithPrivateKey(privKey).WithLogger(l)
