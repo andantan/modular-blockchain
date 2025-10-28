@@ -14,22 +14,24 @@ func main() {
 
 	privKey, err := crypto.GeneratePrivateKey()
 	if err != nil {
-		panic(fmt.Sprintf("❌ Failed to generate private key: %v", err))
+		panic(fmt.Sprintf("❌  Failed to generate private key: %v", err))
 	}
 
 	privKeyHex := hex.EncodeToString(privKey.Bytes())
 
 	if *outputFile != "" {
 		if err = os.WriteFile(*outputFile, []byte(privKeyHex), 0600); err != nil {
-			panic(fmt.Sprintf("❌ Failed to write private key to file: %v", err))
+			panic(fmt.Sprintf("❌  Failed to write private key to file: %v", err))
 		}
-		fmt.Printf("✅ Private key saved successfully to '%s'.\n", *outputFile)
+		fmt.Printf("✅  Private key saved successfully to '%s'.\n", *outputFile)
 	} else {
 		pubKeyHex := hex.EncodeToString(privKey.PublicKey().Bytes())
-		fmt.Println("🔑 New key pair generated successfully!")
+		addressHex := hex.EncodeToString(privKey.PublicKey().Address().Bytes())
+		fmt.Println("🔑  New key pair generated successfully!")
 		fmt.Println("==================================================================")
 		fmt.Printf("Private Key: %s\n", privKeyHex)
 		fmt.Printf("Public Key : %s\n", pubKeyHex)
+		fmt.Printf("Address: %s\n", addressHex)
 		fmt.Println("==================================================================")
 		fmt.Println("⚠️  IMPORTANT: Store your private key in a secure location and never share it.")
 	}

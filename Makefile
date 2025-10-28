@@ -32,8 +32,11 @@ run: build
 	@$(CLEAR_COMMAND)
 	./bin/exec $(ARGS)
 
-gen_key:
+key_gen:
 	@go run .\cli\key_gen\main.go $(ARGS)
+
+key_info:
+	@go run .\cli\key_data\main.go $(ARGS)
 
 # ==============================================================================
 # Rust Discovery Server Commands

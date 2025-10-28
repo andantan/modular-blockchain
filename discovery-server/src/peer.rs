@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use rand::prelude::SliceRandom;
@@ -46,16 +46,27 @@ pub type PeerMap = HashMap<String, Peer>;
 #[derive(Clone)]
 pub struct PeerStore {
     peers: Arc<RwLock<PeerMap>>,
+    validators: Arc<HashSet<String>>,
 }
 
 impl PeerStore {
-    pub fn new() -> Self {
+    pub fn new(trusted_validators: HashSet<String>) -> Self {
         Self {
             peers: Arc::new(RwLock::new(PeerMap::new())),
+            validators: Arc::new(trusted_validators),
         }
     }
 
-    pub async fn register(&self, peer_info: PeerInfo) {
+    pub async fn register(&self, mut peer_info: PeerInfo) {
+        if peer_info.is_validator {
+            if !self.validators.contains(&peer_info.address) {
+                println!("[Register] Untrusted validator claim from {}. Forcing to non-validator.", peer_info.address);
+                peer_info.is_validator = false;
+            } else {
+                println!("[Register] Trusted validator registered {}.", peer_info.address);
+            }
+        }
+
         let mut peer_map = self.peers.write().await;
         let peer_address = peer_info.address.clone();
         let peer_net_addr = peer_info.net_addr.clone();
