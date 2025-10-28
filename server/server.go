@@ -281,62 +281,72 @@ func (s *Server) proposerLoop() {
 		case <-s.closeCh:
 			return
 		case <-ticker.C:
-			s.proposeBlockIfProposer()
+			nextHeight := s.Chain.GetCurrentHeight() + 1
+			isLeader, err := s.isLeader(nextHeight)
+			if err != nil {
+				_ = s.Logger.Log("msg", "failed to check if proposer", "err", err, "height", nextHeight)
+				continue
+			}
+
+			if !isLeader {
+				continue
+			}
+
+			_ = s.Logger.Log("msg", "our turn to propose", "height", nextHeight)
+			if err = s.proposeBlock(nextHeight); err != nil {
+				_ = s.Logger.Log("msg", "failed to propose block", "err", err, "height", nextHeight)
+			}
 		}
 	}
 }
 
-func (s *Server) proposeBlockIfProposer() {
-	nextHeight := s.Chain.GetCurrentHeight() + 1
+func (s *Server) isLeader(height uint64) (bool, error) {
 	vspi, err := s.PeerProvider.GetValidators()
 	if err != nil {
 		_ = s.Logger.Log("msg", "failed to get validators", "err", err)
-		return
+		return false, err
 	}
 
 	vAddrs := make([]types.Address, len(vspi))
 	for i, vpi := range vspi {
 		vAddr, err := types.AddressFromHexString(vpi.Address)
 		if err != nil {
-			return
+			return false, err
 		}
 		vAddrs[i] = vAddr
 	}
 
-	roundProposer := s.LeaderSelector.SelectLeader(vAddrs, nextHeight)
+	roundProposer := s.LeaderSelector.SelectLeader(vAddrs, height)
 
-	if !roundProposer.Equal(s.Address) {
-		_ = s.Logger.Log("msg", "not our turn to propose", "our_address", s.Address.ShortString(8), "leader", roundProposer.ShortString(8))
-		return
-	}
+	return roundProposer.Equal(s.Address), nil
+}
 
+func (s *Server) proposeBlock(height uint64) error {
 	newBlock, err := s.Proposer.Createblock()
 	if err != nil {
-		return
+		return fmt.Errorf("failed to create block: %w", err)
 	}
 
-	_ = s.Logger.Log("msg", "our turn to propose", "height", nextHeight)
+	_ = s.Logger.Log("msg", "our turn to propose", "height", height)
 
 	proposeMessage, err := s.Proposer.ProposeBlock(newBlock)
 	if err != nil {
-		_ = s.Logger.Log("msg", "failed to propose block, will be re-election start", "err", err)
+		return fmt.Errorf("failed to create propose message: %w", err)
 	}
 
 	// start propose
 	payload, err := s.ConsensusMessageCodec.Encode(proposeMessage)
 	if err != nil {
-		return
-	}
-
-	select {
-	case <-s.closeCh:
-		return
-	default:
+		return fmt.Errorf("failed to encode message: %w", err)
 	}
 
 	go func() {
-		_ = s.Node.Broadcast(payload)
+		if err := s.Node.Broadcast(payload); err != nil {
+			_ = s.Logger.Log("msg", "failed to broadcast proposal", "err", err)
+		}
 	}()
+
+	return nil
 }
 
 func (s *Server) mainLoop() {
@@ -351,8 +361,8 @@ func (s *Server) mainLoop() {
 		select {
 		case <-s.closeCh:
 			return
-		case m := <-rawMsgCh:
-			s.processRawMessage(m)
+		case rm := <-rawMsgCh:
+			s.processRawMessage(rm)
 		case sm := <-synchronizerMsgCh:
 			s.processSynchronizerMessage(sm)
 		case cm := <-s.ForwardConsensusEngineMessageCh:

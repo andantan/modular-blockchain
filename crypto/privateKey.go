@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
+	"math/big"
 )
 
 type PrivateKey struct {
@@ -21,6 +22,30 @@ func GeneratePrivateKey() (*PrivateKey, error) {
 	return &PrivateKey{
 		k,
 	}, nil
+}
+
+func PrivateKeyFromBytes(b []byte) *PrivateKey {
+	d := new(big.Int).SetBytes(b)
+	curve := elliptic.P256()
+	x, y := curve.ScalarBaseMult(d.Bytes())
+	pubKey := ecdsa.PublicKey{
+		Curve: curve,
+		X:     x,
+		Y:     y,
+	}
+
+	privKey := &ecdsa.PrivateKey{
+		PublicKey: pubKey,
+		D:         d,
+	}
+
+	return &PrivateKey{
+		key: privKey,
+	}
+}
+
+func (k *PrivateKey) Bytes() []byte {
+	return k.key.D.Bytes()
 }
 
 func (k *PrivateKey) PublicKey() *PublicKey {

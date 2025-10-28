@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
+	"flag"
 	"fmt"
 	"github.com/andantan/modular-blockchain/core"
 	"github.com/andantan/modular-blockchain/crypto"
@@ -14,6 +16,7 @@ import (
 	"github.com/andantan/modular-blockchain/network/synchronizer"
 	"github.com/andantan/modular-blockchain/server"
 	"github.com/andantan/modular-blockchain/util"
+	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -36,10 +39,25 @@ func randomPortInRange(min, max uint16) (uint16, error) {
 }
 
 func main() {
-	privKey, err := crypto.GeneratePrivateKey()
-	if err != nil {
-		panic(err)
+	privKeyFile := flag.String("k", "", "Path to the private key file (e.g., mykey.hex)")
+	flag.Parse()
+
+	if *privKeyFile == "" {
+		flag.Usage()
+		panic("❌  Private key file path is required. Please use the -k flag.")
 	}
+
+	keyHexBytes, err := os.ReadFile(*privKeyFile)
+	if err != nil {
+		log.Fatalf("❌  Failed to read private key file '%s': %v", *privKeyFile, err)
+	}
+
+	privKeyBytes, err := hex.DecodeString(string(keyHexBytes))
+	if err != nil {
+		log.Fatalf("❌  Failed to decode hex string from file: %v", err)
+	}
+
+	privKey := crypto.PrivateKeyFromBytes(privKeyBytes)
 	pubKey := privKey.PublicKey()
 	address := pubKey.Address()
 
@@ -58,7 +76,7 @@ func main() {
 	apiListenAddr := fmt.Sprintf("127.0.0.1:%d", listenPort+1)
 	apiServer := http.NewHttpApiServer(apiListenAddr, blockChain, memPool)
 
-	storer := core.NewBlockStorage(fmt.Sprintf("%d_block", listenPort))
+	storer := core.NewBlockStorage(fmt.Sprintf("%s_block", address.ShortString(8)))
 	blockTime := 30 * time.Second
 	processor := core.NewBlockProcessor(blockChain)
 

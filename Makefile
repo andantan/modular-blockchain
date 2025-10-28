@@ -30,7 +30,10 @@ build:
 
 run: build
 	@$(CLEAR_COMMAND)
-	./bin/exec
+	./bin/exec $(ARGS)
+
+gen_key:
+	@go run .\cli\key_gen\main.go $(ARGS)
 
 # ==============================================================================
 # Rust Discovery Server Commands

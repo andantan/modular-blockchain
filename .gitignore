@@ -4,3 +4,6 @@
 /discovery-server/target/
 /bin/
 /*_block/
+
+*.key
+*.hex
