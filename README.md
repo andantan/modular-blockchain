@@ -96,7 +96,7 @@ Located in the project root, `validators.json` defines the validator set in the 
 You can generate a random transaction using:
 
 ```http
-GET http://127.0.0.1:51773/random
+GET http://127.0.0.1:{api-server-port}/random
 ```
 
 **Example Response:**
@@ -143,7 +143,7 @@ This project was presented at **GopherCon Korea 2025**, and the demo and materia
 2. `make key_gen ARGS="-o test.hex"` — generate a private key
 3. `make key_info ARGS="-k test.hex"` — view key info
 4. `make run ARGS="-k test.hex"` — run the node
-5. `curl http://127.0.0.1:51773/random` — generate a random transaction
+5. `curl http://127.0.0.1:{api-server-port}/random` — generate a random transaction
 
 ---
 
