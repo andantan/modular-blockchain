@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"github.com/andantan/modular-blockchain/core/block"
 	"github.com/andantan/modular-blockchain/core/contract"
 	"github.com/andantan/modular-blockchain/types"
@@ -91,11 +92,13 @@ func (bc *Blockchain) Bootstrap() {
 		}
 
 		if err = bc.blockProcessor.ProcessBlock(b); err != nil {
-			panic(err)
+			if !errors.Is(err, ErrBlockKnown) {
+				panic(err)
+			}
 		}
 
 		hash, _ := b.Hash()
-		_ = bc.logger.Log("msg", "verified block", "height", height, "hash", hash.String())
+		_ = bc.logger.Log("msg", "verified block", "height", h, "hash", hash.String())
 	}
 
 	_ = bc.logger.Log("msg", "finished blockchain bootstrap", "final_height", bc.GetCurrentHeight())
