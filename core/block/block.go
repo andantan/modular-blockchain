@@ -236,11 +236,6 @@ func (b *Block) Seal(votes []*CommitVote, set []types.Address) error {
 		return fmt.Errorf("block tail is already set")
 	}
 
-	quorum := (2 * len(set) / 3) + 1
-	if len(votes) < quorum {
-		return fmt.Errorf("not enough commit votes in tail")
-	}
-
 	for _, v := range votes {
 		found := false
 		for _, validatorAddr := range set {

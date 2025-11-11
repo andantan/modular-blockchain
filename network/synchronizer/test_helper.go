@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func GenerateTestSynchronizer(t *testing.T) (*core.Blockchain, *ChainSynchroizer) {
+func GenerateTestSynchronizer(t *testing.T) (*core.Blockchain, *ChainSynchronizer) {
 	bc := core.GenerateTestBlockchain(t)
 	s := NewChainSynchronizer(util.RandomAddress(), "our-net-addr", bc)
 

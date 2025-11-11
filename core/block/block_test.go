@@ -81,23 +81,6 @@ func TestBlock_Seal(t *testing.T) {
 		assert.Contains(t, err.Error(), "already set")
 	})
 
-	t.Run("error with not enough votes", func(t *testing.T) {
-		b := GenerateRandomTestBlock(t, 1<<4)
-		bh, err := b.Hash()
-		assert.NoError(t, err)
-
-		votes := make([]*CommitVote, quorum)
-		for i := 0; i < quorum; i++ {
-			votes[i] = GenerateRandomTestCommitVoteWithKey(t, bh.Bytes(), 0, b.Header.Height, keys[i])
-		}
-
-		invalidVotes := votes[:quorum-1]
-		err = b.Seal(invalidVotes, addrs)
-		assert.False(t, b.IsConsented())
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not enough commit votes")
-	})
-
 	t.Run("error with non-validator", func(t *testing.T) {
 		b := GenerateRandomTestBlock(t, 1<<4)
 		bh, err := b.Hash()

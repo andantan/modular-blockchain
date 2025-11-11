@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/andantan/modular-blockchain/core"
 	"github.com/andantan/modular-blockchain/core/block"
@@ -8,6 +9,7 @@ import (
 	"github.com/andantan/modular-blockchain/network/consensus/pbft"
 	"github.com/andantan/modular-blockchain/network/message"
 	"github.com/andantan/modular-blockchain/network/protocol/tcp"
+	"github.com/andantan/modular-blockchain/network/provider"
 	"github.com/andantan/modular-blockchain/network/synchronizer"
 	"github.com/andantan/modular-blockchain/types"
 	"github.com/andantan/modular-blockchain/util"
@@ -69,13 +71,13 @@ func TestServer_ProcessGossipMessage(t *testing.T) {
 	bc := core.GenerateTestBlockchain(t)
 	mp := core.GenerateTestMempool(t, 100)
 	c := message.NewDefaultGossipMessageCodec()
+	l := util.LoggerWithPrefixes("Server")
 	s := &Server{
-		logger: util.LoggerWithPrefixes("Server"),
-		state:  types.NewAtomicNumber[ServerState](Online),
+		state: types.NewAtomicNumber[ServerState](Online),
 	}
-	no := NewNetworkOptions().WithNode(maxPeers, mainNode).WithGossipMessageCodec(c)
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithGossipMessageCodec(c)
 	bo := NewBlockchainOptions().WithChain(bc, time.Minute).WithVirtualMemoryPool(mp, 100)
-	so := NewServerOptions(false).WithListenAddr(mainNodeAddr).WithPrivateKey(privKey)
+	so := NewServerOptions(false).WithPrivateKey(privKey).WithLogger(l)
 	s.NetworkOptions = no
 	s.BlockchainOptions = bo
 	s.ServerOptions = so
@@ -198,14 +200,14 @@ func TestServer_ProcessSyncMessage(t *testing.T) {
 	defer sn.Stop()
 	sc := synchronizer.NewDefaultSyncMessageCodec()
 	gc := message.NewDefaultGossipMessageCodec()
+	l := util.LoggerWithPrefixes("Server")
 	s := &Server{
-		logger: util.LoggerWithPrefixes("Server"),
-		state:  types.NewAtomicNumber[ServerState](Online),
+		state: types.NewAtomicNumber[ServerState](Online),
 	}
-	no := NewNetworkOptions().WithNode(maxPeers, mainNode).WithSyncMessageCodec(sc).WithSynchronizer(sn)
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithSyncMessageCodec(sc).WithSynchronizer(sn)
 	no = no.WithGossipMessageCodec(gc)
 	bo := NewBlockchainOptions().WithChain(bc, time.Minute).WithVirtualMemoryPool(mp, 100)
-	so := NewServerOptions(false).WithListenAddr(mainNodeAddr).WithPrivateKey(privKey)
+	so := NewServerOptions(false).WithPrivateKey(privKey).WithLogger(l)
 	s.NetworkOptions = no
 	s.ServerOptions = so
 	s.BlockchainOptions = bo
@@ -331,16 +333,17 @@ func TestServer_ProcessConsensusMessage(t *testing.T) {
 	cd := pbft.NewPbftConsensusMessageCodec()
 	cf := pbft.NewPbftConsensusEngineFactory()
 	pp := GenerateMockPeerProvider()
+	sc := GenerateMockSynchronizer()
+	l := util.LoggerWithPrefixes("Server")
 
 	s := &Server{
-		logger: util.LoggerWithPrefixes("Server"),
-		state:  types.NewAtomicNumber[ServerState](Online),
+		state: types.NewAtomicNumber[ServerState](Online),
 	}
 
-	no := NewNetworkOptions().WithNode(maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb)
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb).WithSynchronizer(sc)
 	bo := NewBlockchainOptions().WithChain(bc, 0).WithVirtualMemoryPool(mp, mpCap).WithProcessor(pc)
 	co := NewConsensusOptions().WithConsensusEngineFactory(cf).WithConsensusMessageCodec(cd)
-	so := NewServerOptions(true).WithListenAddr(mainNodeAddr).WithPrivateKey(privKey)
+	so := NewServerOptions(true).WithPrivateKey(privKey).WithLogger(l)
 
 	s.NetworkOptions = no
 	s.ServerOptions = so
@@ -575,4 +578,301 @@ func TestServer_ProcessConsensusMessage(t *testing.T) {
 	}
 
 	wgFb.Wait()
+}
+
+func TestServer_ProposeBlockIfProposer_When_Proposer(t *testing.T) {
+	mainNodeAddr := ":21500"
+	privKey, err := crypto.GeneratePrivateKey()
+	assert.NoError(t, err)
+	mainAddress := privKey.PublicKey().Address()
+	assert.NotNil(t, mainAddress)
+	assert.NoError(t, err)
+	maxPeers := 7
+	mainNode := tcp.NewTcpNode(privKey, mainNodeAddr, maxPeers)
+
+	mainNode.Listen()
+	time.Sleep(100 * time.Millisecond)
+
+	numPeers := 7
+	remoteNodes := make([]*tcp.TcpNode, numPeers)
+	for i := 0; i < numPeers; i++ {
+		time.Sleep(50 * time.Millisecond)
+		go func() {
+			remoteNode := tcp.GenerateTestTcpNode(t, fmt.Sprintf(":%d", 21501+i), maxPeers)
+			remoteNode.Listen()
+
+			time.Sleep(100 * time.Millisecond)
+			remoteNodes[i] = remoteNode
+			assert.NoError(t, remoteNode.Connect(mainNodeAddr))
+		}()
+	}
+
+	t.Cleanup(func() {
+		mainNode.Close()
+		for _, n := range remoteNodes {
+			n.Close()
+		}
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, maxPeers, len(mainNode.Peers()))
+	for i := 0; i < numPeers; i++ {
+		assert.Equal(t, 1, len(remoteNodes[i].Peers()))
+	}
+
+	mpCap := 100
+	bc := core.GenerateTestBlockchain(t)
+	mp := core.GenerateTestMempool(t, mpCap)
+	gb := message.NewDefaultGossipMessageCodec()
+	cd := pbft.NewPbftConsensusMessageCodec()
+	cl := pbft.NewPbftLeaderSelector()
+	po := pbft.NewPbftProposer(privKey, bc, mp)
+	pp := GenerateMockPeerProvider()
+	l := util.LoggerWithPrefixes("Server")
+
+	tx := block.GenerateRandomTestTransaction(t)
+	assert.NoError(t, mp.Put(tx))
+
+	s := &Server{
+		state: types.NewAtomicNumber[ServerState](Online),
+	}
+
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb)
+	bo := NewBlockchainOptions().WithChain(bc, 0).WithVirtualMemoryPool(mp, mpCap)
+	co := NewConsensusOptions().WithConsensusMessageCodec(cd).WithLeaderSelector(cl).WithProposer(po)
+	so := NewServerOptions(true).WithPrivateKey(privKey).WithLogger(l)
+
+	s.NetworkOptions = no
+	s.ServerOptions = so
+	s.BlockchainOptions = bo
+	s.ConsensusOptions = co
+
+	assert.NoError(t, pp.Register(s.getOurInfo())) // 1 Validator
+
+	s.proposeBlockIfProposer()
+
+	wgPrePrepare := new(sync.WaitGroup)
+	wgPrePrepare.Add(numPeers)
+
+	for i, remoteNode := range remoteNodes {
+		go func() {
+			defer wgPrePrepare.Done()
+			select {
+			case msg := <-remoteNode.ConsumeRawMessage():
+				payload := msg.Payload()
+				assert.NotEmpty(t, payload)
+				assert.Equal(t, byte(message.MessageConsensusType), payload[0])
+				assert.Equal(t, byte(pbft.MessagePbftConsensusSubTypePrePrepare), payload[1])
+				decodedMsg, err := cd.Decode(msg.Payload())
+				assert.NoError(t, err)
+				decodedPrePrepare, ok := decodedMsg.(*pbft.PbftPrePrepareMessage)
+				assert.True(t, ok)
+				assert.Equal(t, uint64(0), decodedPrePrepare.View)
+				assert.Equal(t, uint64(1), decodedPrePrepare.Sequence)
+				assert.NoError(t, decodedPrePrepare.Verify())
+			case <-time.After(500 * time.Millisecond):
+				t.Errorf("peer %d does not received msg", i)
+			}
+		}()
+	}
+
+	wgPrePrepare.Wait()
+}
+
+func TestServer_ProposeBlockIfProposer_When_NotProposer(t *testing.T) {
+	mainNodeAddr := ":22500"
+	privKey, err := crypto.GeneratePrivateKey()
+	assert.NoError(t, err)
+	mainAddress := privKey.PublicKey().Address()
+	assert.NotNil(t, mainAddress)
+	assert.NoError(t, err)
+	maxPeers := 7
+	mainNode := tcp.NewTcpNode(privKey, mainNodeAddr, maxPeers)
+
+	mainNode.Listen()
+	time.Sleep(100 * time.Millisecond)
+
+	numPeers := 7
+	remoteNodes := make([]*tcp.TcpNode, numPeers)
+	for i := 0; i < numPeers; i++ {
+		time.Sleep(50 * time.Millisecond)
+		go func() {
+			remoteNode := tcp.GenerateTestTcpNode(t, fmt.Sprintf(":%d", 22501+i), maxPeers)
+			remoteNode.Listen()
+
+			time.Sleep(100 * time.Millisecond)
+			remoteNodes[i] = remoteNode
+			assert.NoError(t, remoteNode.Connect(mainNodeAddr))
+		}()
+	}
+
+	t.Cleanup(func() {
+		mainNode.Close()
+		for _, n := range remoteNodes {
+			n.Close()
+		}
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, maxPeers, len(mainNode.Peers()))
+	for i := 0; i < numPeers; i++ {
+		assert.Equal(t, 1, len(remoteNodes[i].Peers()))
+	}
+
+	mpCap := 100
+	bc := core.GenerateTestBlockchain(t)
+	mp := core.GenerateTestMempool(t, mpCap)
+	gb := message.NewDefaultGossipMessageCodec()
+	cd := pbft.NewPbftConsensusMessageCodec()
+	cl := pbft.NewPbftLeaderSelector()
+	po := pbft.NewPbftProposer(privKey, bc, mp)
+	pp := GenerateMockPeerProvider()
+	l := util.LoggerWithPrefixes("Server")
+
+	tx := block.GenerateRandomTestTransaction(t)
+	assert.NoError(t, mp.Put(tx))
+
+	s := &Server{
+		state: types.NewAtomicNumber[ServerState](Online),
+	}
+
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithPeerProvider(pp).WithGossipMessageCodec(gb)
+	bo := NewBlockchainOptions().WithChain(bc, 0).WithVirtualMemoryPool(mp, mpCap)
+	co := NewConsensusOptions().WithConsensusMessageCodec(cd).WithLeaderSelector(cl).WithProposer(po)
+	so := NewServerOptions(true).WithPrivateKey(privKey).WithLogger(l)
+
+	s.NetworkOptions = no
+	s.ServerOptions = so
+	s.BlockchainOptions = bo
+	s.ConsensusOptions = co
+
+	assert.NoError(t, pp.Register(s.getOurInfo())) // 1 Validator
+
+	temperPeerInfo := &provider.PeerInfo{
+		Address:        util.RandomAddress().String(),
+		NetAddr:        "tempering",
+		Connections:    uint8(5),
+		MaxConnections: uint8(16),
+		Height:         uint64(0),
+		IsValidator:    true,
+	}
+	pp.Peers[s.Address] = temperPeerInfo
+
+	s.proposeBlockIfProposer()
+
+	wgPrePrepare := new(sync.WaitGroup)
+	wgPrePrepare.Add(numPeers)
+
+	for _, remoteNode := range remoteNodes {
+		go func() {
+			defer wgPrePrepare.Done()
+			select {
+			case <-remoteNode.ConsumeRawMessage():
+				t.Errorf("mainNode should not propose block")
+			case <-time.After(500 * time.Millisecond):
+				return
+			}
+		}()
+	}
+
+	wgPrePrepare.Wait()
+}
+
+func TestServer_ProcessCreatedTransaction(t *testing.T) {
+	mainNodeAddr := ":23500"
+	privKey, err := crypto.GeneratePrivateKey()
+	assert.NoError(t, err)
+	mainAddress := privKey.PublicKey().Address()
+	assert.NotNil(t, mainAddress)
+	assert.NoError(t, err)
+	maxPeers := 7
+	mainNode := tcp.NewTcpNode(privKey, mainNodeAddr, maxPeers)
+
+	mainNode.Listen()
+	time.Sleep(100 * time.Millisecond)
+
+	numPeers := 7
+	remoteNodes := make([]*tcp.TcpNode, numPeers)
+	for i := 0; i < numPeers; i++ {
+		time.Sleep(50 * time.Millisecond)
+		go func() {
+			remoteNode := tcp.GenerateTestTcpNode(t, fmt.Sprintf(":%d", 23501+i), maxPeers)
+			remoteNode.Listen()
+
+			time.Sleep(100 * time.Millisecond)
+			remoteNodes[i] = remoteNode
+			assert.NoError(t, remoteNode.Connect(mainNodeAddr))
+		}()
+	}
+
+	t.Cleanup(func() {
+		mainNode.Close()
+		for _, n := range remoteNodes {
+			n.Close()
+		}
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, maxPeers, len(mainNode.Peers()))
+	for i := 0; i < numPeers; i++ {
+		assert.Equal(t, 1, len(remoteNodes[i].Peers()))
+	}
+
+	mpCap := 100
+	mp := core.GenerateTestMempool(t, mpCap)
+	gb := message.NewDefaultGossipMessageCodec()
+	as := GenerateMockApiServer()
+	as.Start()
+	t.Cleanup(func() {
+		as.Stop()
+	})
+	l := util.LoggerWithPrefixes("Server")
+
+	s := &Server{
+		state: types.NewAtomicNumber[ServerState](Online),
+	}
+
+	no := NewNetworkOptions().WithNode(mainNodeAddr, maxPeers, mainNode).WithApiServer("api", as).WithGossipMessageCodec(gb)
+	bo := NewBlockchainOptions().WithVirtualMemoryPool(mp, mpCap)
+	so := NewServerOptions(true).WithPrivateKey(privKey).WithLogger(l)
+
+	s.NetworkOptions = no
+	s.ServerOptions = so
+	s.BlockchainOptions = bo
+
+	newTx := block.GenerateRandomTestTransaction(t)
+	newTxHash, err := newTx.Hash()
+	assert.NoError(t, err)
+	s.processCreatedTransaction(newTx)
+
+	wgTx := new(sync.WaitGroup)
+	wgTx.Add(numPeers)
+
+	for i, remoteNode := range remoteNodes {
+		go func() {
+			defer wgTx.Done()
+			select {
+			case msg := <-remoteNode.ConsumeRawMessage():
+				payload := msg.Payload()
+				assert.NotEmpty(t, payload)
+				assert.Equal(t, byte(message.MessageGossipType), payload[0])
+				assert.Equal(t, byte(message.MessageGossipSubTypeTransaction), payload[1])
+				decodedMsg, err := gb.Decode(msg.Payload())
+				assert.NoError(t, err)
+				decodedTransaction, ok := decodedMsg.(*block.Transaction)
+				assert.True(t, ok)
+				decodedHash, err := decodedTransaction.Hash()
+				assert.NoError(t, err)
+				assert.True(t, newTxHash.Equal(decodedHash))
+				assert.NoError(t, decodedTransaction.Verify())
+				assert.True(t, bytes.Equal(newTx.Data, decodedTransaction.Data))
+				assert.True(t, newTx.From.Equal(decodedTransaction.From))
+				assert.Equal(t, newTx.Nonce, decodedTransaction.Nonce)
+			case <-time.After(500 * time.Millisecond):
+				t.Errorf("peer %d does not received msg", i)
+			}
+		}()
+	}
+
+	wgTx.Wait()
 }

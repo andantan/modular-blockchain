@@ -1,105 +1,159 @@
-# Benchmarks: Gob vs. Protocol Buffers
+# Kangaroo (Migration)
 
-## Block Codec Benchmarks
-This benchmark provides an in-depth performance comparison between Go's native `gob` encoding and Google's Protocol Buffers (`protobuf`). The tests measure the speed, memory usage, and allocation overhead for serializing and deserializing large, complex data structures (`Blocks` containing numerous `Transactions`), simulating a real-world blockchain workload.
-
-## Results
-
-Tests were run on an `Intel(R) Core(TM) i5-1035G7 CPU @ 1.20GHz`. The benchmark matrix covers various combinations of block counts and Transactions per block.
-
-*Note: Benchmarks with 500 blocks were omitted as they consumed excessive memory resources, highlighting the scalability challenges with `gob`.*
-
-| Benchmark                      | Library  | Speed (ns/op)     | Memory Usage (B/op) | Allocations (allocs/op) |
-|:-------------------------------|:---------|:------------------|:--------------------|:------------------------|
-| **Encode 1 Block, 5k Txs**     | Gob      | 32,579,773        | -                   | -                       |
-| **Encode 1 Block, 5k Txs**     | Protobuf | **3,943,027**     | -                   | -                       |
-| **Decode 1 Block, 5k Txs**     | Gob      | 12,252,026        | 13,254,928          | 65,353                  |
-| **Decode 1 Block, 5k Txs**     | Protobuf | **4,184,135**     | **6,475,408**       | **20,027**              |
-|                                |          |                   |                     |                         |
-| **Encode 1 Block, 30k Txs**    | Gob      | 158,894,217       | -                   | -                       |
-| **Encode 1 Block, 30k Txs**    | Protobuf | **24,222,199**    | -                   | -                       |
-| **Decode 1 Block, 30k Txs**    | Gob      | 134,508,738       | 163,761,879         | 390,357                 |
-| **Decode 1 Block, 30k Txs**    | Protobuf | **34,195,157**    | **39,222,288**      | **120,034**             |
-|                                |          |                   |                     |                         |
-| **Encode 10 Blocks, 5k Txs**   | Gob      | 130,889,444       | -                   | -                       |
-| **Encode 10 Blocks, 5k Txs**   | Protobuf | **30,017,874**    | -                   | -                       |
-| **Decode 10 Blocks, 5k Txs**   | Gob      | 111,833,500       | 266,393,504         | 650,520                 |
-| **Decode 10 Blocks, 5k Txs**   | Protobuf | **35,782,718**    | **64,753,672**      | **200,256**             |
-|                                |          |                   |                     |                         |
-| **Encode 100 Blocks, 30k Txs** | Gob      | 57,057,773,200    | -                   | -                       |
-| **Encode 100 Blocks, 30k Txs** | Protobuf | **1,923,943,000** | -                   | -                       |
-| **Decode 100 Blocks, 30k Txs** | Gob      | 165,794,038,200   | 21,753,846,016      | 39,002,162              |
-| **Decode 100 Blocks, 30k Txs** | Protobuf | **3,787,941,000** | **3,922,223,880**   | **12,003,211**          |
-
-*Lower values are better.*
-
-## Analysis 🧐
-
-These results overwhelmingly demonstrate the superior performance and efficiency of **Protocol Buffers** over `gob` for handling large-scale, complex data structures typical in a blockchain.
-
-#### 1. Speed (ns/op) 🚀
-
-Protobuf is consistently and significantly faster. In the most extreme test case (`Encode 100 Blocks, 30k Txs`), Protobuf is approximately **29 times faster** than Gob. This performance advantage stems from Protobuf's use of pre-compiled, highly optimized serialization code, which avoids the expensive runtime reflection used by Gob.
-
-#### 2. Memory Usage & Allocations (B/op, allocs/op) 📉
-
-The difference in memory efficiency is even more dramatic.
--   **Memory Usage**: In the `Decode 100 Blocks, 30k Txs` test, Protobuf used ~3.9 GB of memory, whereas Gob used ~21.7 GB—a **5.5x difference**.
--   **Allocations**: Protobuf consistently makes about **3 times fewer memory allocations**.
-
-This efficiency is critical. The massive memory footprint and allocation count of Gob under heavy load put extreme pressure on the Go garbage collector (GC), which can lead to significant pauses ("stop-the-world") and overall system instability. The fact that the 500-block benchmarks failed to run is a testament to this scalability limit.
-
-## Conclusion ✅
-
-While `gob` is convenient for simple, Go-only applications, it is not suitable for high-performance, large-scale systems like a blockchain.
-
-**Protocol Buffers is the definitive choice** for this project, providing critical advantages in:
--   **Execution Speed**: Drastically faster serialization and deserialization.
--   **Memory Efficiency**: Significantly lower memory footprint and fewer GC-triggering allocations.
--   **Scalability**: Proven to handle massive data volumes where `gob` fails.
-
+This repository documents the migrated version of the original project now hosted at [https://github.com/andantan/kangaroo](https://github.com/andantan/kangaroo). It summarizes the content presented at **GopherCon Korea 2025** and provides essential commands for setup and execution.
 
 ---
 
-## Transaction Codec Benchmarks
+## Overview
 
-This benchmark compares the performance of Go's native `gob` encoding with Protocol Buffers (`protobuf`) for serializing and deserializing large slices of `Transaction` objects. The goal is to measure raw serialization speed, memory usage, and the number of memory allocations.
+* `make run ARGS="-k c.hex"` : Runs a blockchain node. The `-k` flag specifies the path to the private key file.
+* `make run-discovery` : Runs the **Peer DNS (Discovery)** server — **must be running** before any node.
+* `make key_gen ARGS="-o test.hex"` : Generates a new private key.
+* `make key_info ARGS="-k test.hex"` : Prints information about the given private key.
+* `validators.json` : Located in the root directory, this file defines the registered validator addresses.
+* Send random transactions via `GET http://127.0.0.1:51773/random` — returns a transaction hash in response.
 
-### Results
+---
 
-Tests were run on an `Intel(R) Core(TM) i5-1035G7 CPU @ 1.20GHz`.
+## Quickstart
 
-| Benchmark (Transactions) | Library  | Speed (ns/op)   | Memory Usage (B/op) | Allocations (allocs/op) |
-|:-------------------------|:---------|:----------------|:--------------------|:------------------------|
-| **Encode 5,000**         | Gob      | 11,998,771      | -                   | -                       |
-| **Encode 5,000**         | Protobuf | **2,562,078**   | -                   | -                       |
-| **Decode 5,000**         | Gob      | 12,166,677      | 13,320,336          | 65,222                  |
-| **Decode 5,000**         | Protobuf | **4,629,081**   | **6,474,808**       | **20,017**              |
-|                          |          |                 |                     |                         |
-| **Encode 30,000**        | Gob      | 78,197,932      | -                   | -                       |
-| **Encode 30,000**        | Protobuf | **15,754,172**  | -                   | -                       |
-| **Decode 30,000**        | Gob      | 86,894,333      | 164,235,476         | 390,226                 |
-| **Decode 30,000**        | Protobuf | **21,556,347**  | **39,221,688**      | **120,024**             |
-|                          |          |                 |                     |                         |
-| **Encode 200,000**       | Gob      | 483,209,533     | -                   | -                       |
-| **Encode 200,000**       | Protobuf | **97,737,946**  | -                   | -                       |
-| **Decode 200,000**       | Gob      | 658,466,850     | 1,375,446,912       | 2,600,235               |
-| **Decode 200,000**       | Protobuf | **149,541,586** | **261,900,478**     | **800,032**             |
-|                          |          |                 |                     |                         |
-| **Encode 1,000,000**     | Gob      | 2,946,477,600   | -                   | -                       |
-| **Encode 1,000,000**     | Protobuf | **445,870,533** | -                   | -                       |
-| **Decode 1,000,000**     | Gob      | 3,955,368,900   | 8,510,050,272       | 13,000,247              |
-| **Decode 1,000,000**     | Protobuf | **670,815,550** | **1,308,948,688**   | **4,000,040**           |
+1. **Clone and install dependencies**
 
-*Lower values are better.*
+```bash
+git clone https://github.com/andantan/modular-blockchain.git
+cd modular-blockchain
+# Build and install dependencies (e.g., go build, etc.)
+```
 
-### Analysis 🧐
+2. **Start the Discovery Server (Required)**
 
-The results clearly demonstrate that **Protocol Buffers is significantly superior to Gob** across all tested metrics, especially as the number of Transactions increases.
+```bash
+make run-discovery
+```
 
--   **Speed 🚀**: Protobuf is consistently **4 to 6 times faster** in both encoding and decoding operations. This is primarily because Protobuf uses pre-generated, highly optimized serialization code, whereas Gob relies on runtime reflection, which is inherently slower.
+3. **Generate a Key**
 
--   **Memory Efficiency 📉**: During decoding, Protobuf uses **5 to 6 times less memory** and makes approximately **3 times fewer memory allocations**. This is due to Protobuf's compact binary format, which uses numeric tags instead of field names, resulting in a much smaller data footprint. The lower allocation count significantly reduces pressure on the garbage collector (GC), which is critical for the performance of a long-running service like a blockchain node.
+```bash
+make key_gen ARGS="-o test.hex"
+# View key information
+make key_info ARGS="-k test.hex"
+```
 
+4. **Run a Node**
 
-**Conclusion**: For a performance-critical application like a blockchain, Protobuf is the clear winner, offering substantial improvements in speed, memory usage, and overall system efficiency.
+```bash
+make run ARGS="-k test.hex"
+```
+
+> The `-k` option specifies the path to the `.hex` private key file.
+
+---
+
+## Command Reference
+
+### `make run`
+
+* Runs a blockchain node.
+* Example: `make run ARGS="-k path/to/privkey.hex"`
+
+### `make run-discovery`
+
+* Runs the peer discovery (DNS) server.
+* Must be active to allow node connection and network discovery.
+
+### `make key_gen`
+
+* Generates a new private key in `.hex` format.
+* Example: `make key_gen ARGS="-o mykey.hex"`
+
+### `make key_info`
+
+* Prints the key’s information (address, public key, etc.).
+* Example: `make key_info ARGS="-k mykey.hex"`
+
+---
+
+## validators.json
+
+Located in the project root, `validators.json` defines the validator set in the following format:
+
+```json
+// examples
+[
+  "0xd6ac9a9828d40df537a2e137401ec9e844146032",
+  "0x8fbb14f9d1e5584093272ba76114fe8dc454667f",
+  "0xb03fc15085e05046286f12b0d19bb63bab6da40c",
+  "0x80a8b001136e08864f459e9218a2df845e187543"
+]
+```
+
+* Used to register or initialize validator nodes at startup.
+* In production, this file should be managed through an automated deployment process.
+
+---
+
+## Random Transaction API (for Testing)
+
+You can generate a random transaction using:
+
+```http
+GET http://127.0.0.1:51773/random
+```
+
+**Example Response:**
+
+```json
+{
+  "transaction_hash": "0xf82118e6d3a2e9e2a7df8e7d634e1f026b18589f367c8dbd404c07020f66726a"
+}
+```
+
+* This endpoint creates a random transaction inside the node and submits it to the mempool/network.
+* Useful for load testing or automated QA.
+
+---
+
+## GopherCon Korea 2025
+
+This project was presented at **GopherCon Korea 2025**, and the demo and materials are being integrated into the migrated repository:
+
+👉 [https://github.com/andantan/kangaroo](https://github.com/andantan/kangaroo)
+
+* **Speaker:** 전규빈(Qbean)
+* **Presentation materials:** See `docs/` or the presentation section in the migrated repo.
+
+---
+
+## Developer Notes & Operational Tips
+
+* The Discovery server must be running for proper peer discovery.
+* After modifying `validators.json`, you may need to restart the node depending on reload support.
+* Keep private key files secure — **never commit them to version control**.
+* The random transaction endpoint is for **testing only** and should be access-restricted in production.
+
+---
+
+## Example Execution Flow
+
+1. `make run-discovery` — start the discovery server
+2. `make key_gen ARGS="-o test.hex"` — generate a private key
+3. `make key_info ARGS="-k test.hex"` — view key info
+4. `make run ARGS="-k test.hex"` — run the node
+5. `curl http://127.0.0.1:51773/random` — generate a random transaction
+
+---
+
+## Migration & Contribution
+
+* The code is being migrated to **andantan/kangaroo**. For PRs, issues, or demos, please refer to the migrated repository.
+* This repository will eventually be fully integrated based on the migration plan.
+
+---
+
+## Contact
+
+Maintainer / Speaker: kyubin2892@gmail.com
+
+---
+
+*If you’d like to add more details — such as screenshots, CI/CD setup, or environment variable descriptions — let me know, and I’ll include them here.*

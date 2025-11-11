@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"github.com/andantan/modular-blockchain/types"
 	"github.com/stretchr/testify/assert"
 	"strings"
@@ -85,4 +86,14 @@ func TestSignatureSerialization(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, sig.R.Cmp(recoveredSigFromString.R) == 0)
 	assert.True(t, sig.S.Cmp(recoveredSigFromString.S) == 0)
+}
+
+func TestPrivateKey_Bytes(t *testing.T) {
+	pk, err := GeneratePrivateKey()
+	assert.NoError(t, err)
+
+	pkb := pk.Bytes()
+	pkf := PrivateKeyFromBytes(pkb)
+
+	assert.True(t, bytes.Equal(pk.Bytes(), pkf.Bytes()))
 }

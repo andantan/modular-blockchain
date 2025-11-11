@@ -11,10 +11,13 @@ import (
 	"github.com/andantan/modular-blockchain/network/provider"
 	"github.com/andantan/modular-blockchain/network/synchronizer"
 	"github.com/andantan/modular-blockchain/types"
+	"github.com/go-kit/log"
 	"time"
 )
 
 type NetworkOptions struct {
+	ListenAddr         string
+	ApiListenAddr      string
 	MaxPeers           int
 	Node               protocol.Node
 	PeerProvider       provider.PeerProvider
@@ -28,7 +31,8 @@ func NewNetworkOptions() *NetworkOptions {
 	return &NetworkOptions{}
 }
 
-func (o *NetworkOptions) WithNode(maxPeers int, node protocol.Node) *NetworkOptions {
+func (o *NetworkOptions) WithNode(addr string, maxPeers int, node protocol.Node) *NetworkOptions {
+	o.ListenAddr = addr
 	o.MaxPeers = maxPeers
 	o.Node = node
 	return o
@@ -39,7 +43,8 @@ func (o *NetworkOptions) WithPeerProvider(p provider.PeerProvider) *NetworkOptio
 	return o
 }
 
-func (o *NetworkOptions) WithApiServer(s api.ApiServer) *NetworkOptions {
+func (o *NetworkOptions) WithApiServer(apiAddr string, s api.ApiServer) *NetworkOptions {
+	o.ApiListenAddr = apiAddr
 	o.ApiServer = s
 	return o
 }
@@ -60,11 +65,19 @@ func (o *NetworkOptions) WithSyncMessageCodec(c synchronizer.SyncMessageCodec) *
 }
 
 func (o *NetworkOptions) IsFulFilled() bool {
+	if o.ListenAddr == "" {
+		return false
+	}
+
 	if o.MaxPeers <= 0 {
 		return false
 	}
 
 	if o.Node == nil {
+		return false
+	}
+
+	if o.ApiListenAddr == "" {
 		return false
 	}
 
@@ -156,6 +169,7 @@ func (o *BlockchainOptions) IsFulFilled() bool {
 
 type ConsensusOptions struct {
 	Proposer                        consensus.Proposer
+	LeaderSelector                  consensus.LeaderSelector
 	ConsensusEngines                map[uint64]consensus.ConsensusEngine
 	ConsensusEngineFactory          consensus.ConsensusEngineFactory
 	ConsensusMessageCodec           consensus.ConsensusMessageCodec
@@ -176,6 +190,11 @@ func (o *ConsensusOptions) WithProposer(p consensus.Proposer) *ConsensusOptions 
 	return o
 }
 
+func (o *ConsensusOptions) WithLeaderSelector(s consensus.LeaderSelector) *ConsensusOptions {
+	o.LeaderSelector = s
+	return o
+}
+
 func (o *ConsensusOptions) WithConsensusEngineFactory(f consensus.ConsensusEngineFactory) *ConsensusOptions {
 	o.ConsensusEngineFactory = f
 	return o
@@ -188,6 +207,10 @@ func (o *ConsensusOptions) WithConsensusMessageCodec(c consensus.ConsensusMessag
 
 func (o *ConsensusOptions) IsFulFilled() bool {
 	if o.Proposer == nil {
+		return false
+	}
+
+	if o.LeaderSelector == nil {
 		return false
 	}
 
@@ -215,18 +238,22 @@ func (o *ConsensusOptions) IsFulFilled() bool {
 }
 
 type ServerOptions struct {
-	PrivateKey    *crypto.PrivateKey
-	PublicKey     *crypto.PublicKey
-	Address       types.Address
-	ListenAddr    string
-	ApiListenAddr string
-	IsValidator   bool
+	Logger      log.Logger
+	PrivateKey  *crypto.PrivateKey
+	PublicKey   *crypto.PublicKey
+	Address     types.Address
+	IsValidator bool
 }
 
 func NewServerOptions(isValidator bool) *ServerOptions {
 	return &ServerOptions{
 		IsValidator: isValidator,
 	}
+}
+
+func (o *ServerOptions) WithLogger(l log.Logger) *ServerOptions {
+	o.Logger = l
+	return o
 }
 
 func (o *ServerOptions) WithPrivateKey(k *crypto.PrivateKey) *ServerOptions {
@@ -236,17 +263,11 @@ func (o *ServerOptions) WithPrivateKey(k *crypto.PrivateKey) *ServerOptions {
 	return o
 }
 
-func (o *ServerOptions) WithListenAddr(listenAddr string) *ServerOptions {
-	o.ListenAddr = listenAddr
-	return o
-}
-
-func (o *ServerOptions) WithApiListenAddr(apiListenAddr string) *ServerOptions {
-	o.ApiListenAddr = apiListenAddr
-	return o
-}
-
 func (o *ServerOptions) IsFulFilled() bool {
+	if o.Logger == nil {
+		return false
+	}
+
 	if o.PrivateKey == nil {
 		return false
 	}
@@ -256,14 +277,6 @@ func (o *ServerOptions) IsFulFilled() bool {
 	}
 
 	if o.Address.Equal(types.Address{}) {
-		return false
-	}
-
-	if o.ListenAddr == "" {
-		return false
-	}
-
-	if o.ApiListenAddr == "" {
 		return false
 	}
 

@@ -18,6 +18,7 @@ type Synchronizer interface {
 	Start()
 	HandleMessage(types.Address, SyncMessage)
 	OutgoingMessage() <-chan SynchronizerMessage
+	IsSynchronized() bool
 	NotifyForkDetected(types.Address, *block.Block)
 	NotifyChainLagging()
 	Stop()
@@ -58,6 +59,7 @@ type PeerState struct {
 	Height    uint64
 	State     SyncState
 	BlockHash types.Hash
+	FirstSeen int64
 }
 
 type InternalSyncMessage struct {
@@ -65,7 +67,7 @@ type InternalSyncMessage struct {
 	Message SyncMessage
 }
 
-type ChainSynchroizer struct {
+type ChainSynchronizer struct {
 	logger log.Logger
 
 	address types.Address
@@ -84,44 +86,43 @@ type ChainSynchroizer struct {
 	closeOnce sync.Once
 }
 
-func NewChainSynchronizer(address types.Address, netAddr string, chain core.Chain) *ChainSynchroizer {
-	gh, err := chain.GetHeaderByHeight(0)
+func NewChainSynchronizer(address types.Address, netAddr string, chain core.Chain) *ChainSynchronizer {
+	return &ChainSynchronizer{
+		logger:         util.LoggerWithPrefixes("Synchronizer"),
+		address:        address,
+		netAddr:        netAddr,
+		state:          types.NewAtomicNumber[SyncState](Initialized),
+		availablePeers: types.NewAtomicMap[types.Address, *PeerState](),
+		chain:          chain,
+		internalMsgCh:  make(chan *InternalSyncMessage, 100),
+		outgoingMsgCh:  make(chan SynchronizerMessage, 100),
+		closeCh:        make(chan struct{}),
+	}
+}
 
+func (s *ChainSynchronizer) Start() {
+	if !s.state.CompareAndSwap(Initialized, Idle) {
+		return
+	}
+
+	gh, err := s.chain.GetHeaderByHeight(0)
 	if err != nil {
 		panic(fmt.Sprintf("Synchronizer error: %s", err))
 	}
 
 	gbh, err := gh.Hash()
-
 	if err != nil {
 		panic(fmt.Sprintf("Synchronizer error: %s", err))
 	}
 
-	return &ChainSynchroizer{
-		logger:           util.LoggerWithPrefixes("Synchronizer"),
-		address:          address,
-		netAddr:          netAddr,
-		state:            types.NewAtomicNumber[SyncState](Initialized),
-		availablePeers:   types.NewAtomicMap[types.Address, *PeerState](),
-		chain:            chain,
-		genesisBlockHash: gbh,
-		internalMsgCh:    make(chan *InternalSyncMessage, 100),
-		outgoingMsgCh:    make(chan SynchronizerMessage, 100),
-		closeCh:          make(chan struct{}),
-	}
-}
-
-func (s *ChainSynchroizer) Start() {
-	if !s.state.CompareAndSwap(Initialized, Idle) {
-		return
-	}
+	s.genesisBlockHash = gbh
 
 	_ = s.logger.Log("msg", "changed state", "state", s.state.Get())
 
 	go s.run()
 }
 
-func (s *ChainSynchroizer) HandleMessage(address types.Address, m SyncMessage) {
+func (s *ChainSynchronizer) HandleMessage(address types.Address, m SyncMessage) {
 	if s.state.Gte(Terminated) {
 		return
 	}
@@ -143,11 +144,15 @@ func (s *ChainSynchroizer) HandleMessage(address types.Address, m SyncMessage) {
 	}
 }
 
-func (s *ChainSynchroizer) OutgoingMessage() <-chan SynchronizerMessage {
+func (s *ChainSynchronizer) OutgoingMessage() <-chan SynchronizerMessage {
 	return s.outgoingMsgCh
 }
 
-func (s *ChainSynchroizer) NotifyForkDetected(from types.Address, b *block.Block) {
+func (s *ChainSynchronizer) IsSynchronized() bool {
+	return s.state.Eq(Synchronized)
+}
+
+func (s *ChainSynchronizer) NotifyForkDetected(from types.Address, b *block.Block) {
 	_ = s.logger.Log("msg", "received fork-detect notification", "from", from.ShortString(8), "block_height", b.Header.Height)
 
 	s.state.Set(ResolvingFork)
@@ -166,16 +171,22 @@ func (s *ChainSynchroizer) NotifyForkDetected(from types.Address, b *block.Block
 	s.sendToOutgoing(msg)
 }
 
-func (s *ChainSynchroizer) NotifyChainLagging() {
-	if s.state.Eq(Idle) || s.state.Eq(Synchronized) {
-		_ = s.logger.Log("msg", "received chain lagging notification")
-
-		s.state.Set(Idle)
-		s.synchronize()
+func (s *ChainSynchronizer) NotifyChainLagging() {
+	if s.state.Eq(SyncingBlocks) {
+		return
 	}
+	_ = s.logger.Log("msg", "received chain lagging notification. broadcast request status message")
+
+	s.state.Set(SyncingBlocks)
+	_ = s.logger.Log("msg", "changed state", "state", s.state.Get())
+
+	msg := &BroadcastMessage{
+		Message: &RequestStatusMessage{},
+	}
+	s.sendToOutgoing(msg)
 }
 
-func (s *ChainSynchroizer) Stop() {
+func (s *ChainSynchronizer) Stop() {
 	s.closeOnce.Do(func() {
 		_ = s.logger.Log("msg", "stoping synchronizer engine", "state", s.state.Get())
 
@@ -189,9 +200,9 @@ func (s *ChainSynchroizer) Stop() {
 	})
 }
 
-func (s *ChainSynchroizer) run() {
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
+func (s *ChainSynchronizer) run() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
 	_ = s.logger.Log("msg", "start Synchronizer", "state", s.state.Get())
 
@@ -200,7 +211,7 @@ func (s *ChainSynchroizer) run() {
 		case <-s.closeCh:
 			_ = s.logger.Log("msg", "exit synchronizer loop", "state", s.state.Get())
 			return
-		case <-timer.C:
+		case <-ticker.C:
 			s.synchronize()
 		case msg := <-s.internalMsgCh:
 			if msg == nil {
@@ -212,7 +223,7 @@ func (s *ChainSynchroizer) run() {
 	}
 }
 
-func (s *ChainSynchroizer) handleSyncMessage(m *InternalSyncMessage) {
+func (s *ChainSynchronizer) handleSyncMessage(m *InternalSyncMessage) {
 	var (
 		err error
 		sm  SynchronizerMessage
@@ -245,7 +256,7 @@ func (s *ChainSynchroizer) handleSyncMessage(m *InternalSyncMessage) {
 	}
 }
 
-func (s *ChainSynchroizer) handleRequestStatusMessage(from types.Address, _ *RequestStatusMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleRequestStatusMessage(from types.Address, _ *RequestStatusMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received request status message", "peer_address", from.ShortString(8))
 
 	currentBlock, err := s.chain.GetCurrentBlock()
@@ -275,7 +286,7 @@ func (s *ChainSynchroizer) handleRequestStatusMessage(from types.Address, _ *Req
 	return msg, nil
 }
 
-func (s *ChainSynchroizer) handleResponseStatusMessage(from types.Address, m *ResponseStatusMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleResponseStatusMessage(from types.Address, m *ResponseStatusMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received response status message", "peer_address", from.ShortString(8))
 
 	if !s.genesisBlockHash.Equal(m.GenesisBlockHash) {
@@ -288,6 +299,7 @@ func (s *ChainSynchroizer) handleResponseStatusMessage(from types.Address, m *Re
 			Height:    m.Height,
 			State:     SyncState(m.State),
 			BlockHash: m.CurrentBlockHash,
+			FirstSeen: time.Now().UnixNano(),
 		}
 		s.availablePeers.Put(from, nps)
 		_ = s.logger.Log("msg", "updated sync peer", "peer_address", nps.Address.ShortString(8), "peer_height", m.Height)
@@ -296,7 +308,7 @@ func (s *ChainSynchroizer) handleResponseStatusMessage(from types.Address, m *Re
 	return nil, nil
 }
 
-func (s *ChainSynchroizer) handleRequestHeadersMessage(from types.Address, m *RequestHeadersMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleRequestHeadersMessage(from types.Address, m *RequestHeadersMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received request headers message", "peer_address", from.ShortString(8))
 
 	headers := make([]*block.Header, 0)
@@ -319,7 +331,7 @@ func (s *ChainSynchroizer) handleRequestHeadersMessage(from types.Address, m *Re
 	return msg, nil
 }
 
-func (s *ChainSynchroizer) handleResponseHeadersMessage(from types.Address, m *ResponseHeadersMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleResponseHeadersMessage(from types.Address, m *ResponseHeadersMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received response headers message", "peer_address", from.ShortString(8))
 
 	if !s.state.Eq(ResolvingFork) {
@@ -368,7 +380,7 @@ func (s *ChainSynchroizer) handleResponseHeadersMessage(from types.Address, m *R
 	return msg, nil
 }
 
-func (s *ChainSynchroizer) handleRequestBlocksMessage(from types.Address, m *RequestBlocksMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleRequestBlocksMessage(from types.Address, m *RequestBlocksMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received request blocks message", "peer_address", from.ShortString(8))
 
 	blocks := make([]*block.Block, 0)
@@ -391,7 +403,7 @@ func (s *ChainSynchroizer) handleRequestBlocksMessage(from types.Address, m *Req
 	return msg, nil
 }
 
-func (s *ChainSynchroizer) handleResponseBlocksMessage(from types.Address, m *ResponseBlocksMessage) (SynchronizerMessage, error) {
+func (s *ChainSynchronizer) handleResponseBlocksMessage(from types.Address, m *ResponseBlocksMessage) (SynchronizerMessage, error) {
 	_ = s.logger.Log("msg", "received response blocks message", "peer_address", from.ShortString(8))
 
 	if !s.state.Eq(SyncingBlocks) {
@@ -435,15 +447,19 @@ func (s *ChainSynchroizer) handleResponseBlocksMessage(from types.Address, m *Re
 	return nil, nil
 }
 
-func (s *ChainSynchroizer) synchronize() {
-	currentState := s.state.Get()
-	if currentState != Idle && currentState != Synchronized {
+func (s *ChainSynchronizer) synchronize() {
+	//currentState := s.state.Get()
+	//if currentState != Idle && currentState != Synchronized {
+	//	return
+	//}
+	if s.state.Eq(ResolvingFork) || s.state.Eq(Terminated) {
 		return
 	}
 
-	s.removeBehindPeers()
+	s.pruneStalePeers()
 
 	bestPeer := s.findBestPeer()
+
 	if bestPeer == nil {
 		_ = s.logger.Log("msg", "no available peers to sync with, broadcasting for status")
 		m := &BroadcastMessage{
@@ -469,22 +485,30 @@ func (s *ChainSynchroizer) synchronize() {
 		_ = s.logger.Log("msg", "changed state", "state", s.state.Get())
 		return
 	} else {
-		s.state.Set(Synchronized)
-		_ = s.logger.Log("msg", "changed state", "state", s.state.Get())
+		if !s.state.Eq(Synchronized) {
+			s.state.Set(Synchronized)
+			_ = s.logger.Log("msg", "changed state", "state", s.state.Get())
+		}
 	}
+
+	_ = s.logger.Log("state", s.state.Get(), "available_peers", s.availablePeers.Len())
 }
 
-func (s *ChainSynchroizer) findBestPeer() *PeerState {
-	highestHeight := s.chain.GetCurrentHeight()
-
+func (s *ChainSynchronizer) findBestPeer() *PeerState {
+	highestHeight := uint64(0)
+	ourHeight := s.chain.GetCurrentHeight()
 	bestPeers := make([]*PeerState, 0)
+
 	s.availablePeers.Range(func(addr types.Address, state *PeerState) bool {
-		if state.Height > highestHeight {
-			highestHeight = state.Height
-			bestPeers = []*PeerState{state}
-		} else if state.Height == highestHeight && highestHeight >= s.chain.GetCurrentHeight() {
-			bestPeers = append(bestPeers, state)
+		if state.Height >= ourHeight {
+			if state.Height > highestHeight {
+				highestHeight = state.Height
+				bestPeers = []*PeerState{state}
+			} else if state.Height == highestHeight {
+				bestPeers = append(bestPeers, state)
+			}
 		}
+
 		return true
 	})
 
@@ -496,24 +520,23 @@ func (s *ChainSynchroizer) findBestPeer() *PeerState {
 	return bestPeers[randomIndex]
 }
 
-func (s *ChainSynchroizer) removeBehindPeers() {
-	currentHeight := s.chain.GetCurrentHeight()
-	thresholdHeight := uint64(float64(currentHeight) * 0.8) // 20%
+func (s *ChainSynchronizer) pruneStalePeers() {
+	thresholdTime := time.Now().Add(-30 * time.Second).UnixNano()
+	stalePeers := make([]types.Address, 0)
 
-	behindPeers := make([]*PeerState, 0)
 	s.availablePeers.Range(func(addr types.Address, state *PeerState) bool {
-		if state.Height < thresholdHeight {
-			behindPeers = append(behindPeers, state)
+		if state.FirstSeen <= thresholdTime {
+			stalePeers = append(stalePeers, addr)
 		}
 		return true
 	})
 
-	for _, peer := range behindPeers {
-		s.availablePeers.Remove(peer.Address)
+	for _, addr := range stalePeers {
+		s.availablePeers.Remove(addr)
 	}
 }
 
-func (s *ChainSynchroizer) sendToOutgoing(m SynchronizerMessage) {
+func (s *ChainSynchronizer) sendToOutgoing(m SynchronizerMessage) {
 	select {
 	case <-s.closeCh:
 		return

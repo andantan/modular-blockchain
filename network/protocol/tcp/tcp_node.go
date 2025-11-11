@@ -239,12 +239,10 @@ func (n *TcpNode) handshakeAndValidate(conn net.Conn) {
 	remoteAddress := remoteId.PublicKey.Address()
 	if !n.peerMap.PutIfNotExist(remoteAddress, peer) {
 		// tie-breaking
-		_ = n.logger.Log("msg", "tie-breaking: new commencing with existing peer", "net-addr", peer.NetAddr(), "address", peer.Address())
-		isInbound := conn.LocalAddr() == n.listener.Addr()
-		isLargerId := n.address.String() > remoteAddress.String()
-		if isInbound && isLargerId {
-			_ = n.logger.Log("msg", "tie-breaking: dropping inbound from lower ID peer")
-			peer.Close()
+		_ = n.logger.Log("msg", "tie-breaking: new commencing with existing peer", "peer_net_addr", peer.NetAddr(), "peer_address", peer.Address().ShortString(8))
+		if n.address.String() > remoteAddress.String() {
+			_ = n.logger.Log("msg", "tie-breaking: dropping inbound from lower ID peer", "peer_net_addr", peer.NetAddr(), "peer_address", peer.Address().ShortString(8))
+			_ = conn.Close()
 		}
 
 		return

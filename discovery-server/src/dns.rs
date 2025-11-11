@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::fs;
 use std::net::SocketAddr;
 use axum::Router;
 use axum::routing::{get, post};
@@ -11,7 +13,15 @@ pub struct DNS {
 
 impl DNS {
     pub fn new_dns_server(address: SocketAddr) -> Self {
-        let store = peer::PeerStore::new();
+        let validators_data = fs::read_to_string("validators.json")
+            .expect("Could not read validators.json file");
+
+        let trusted_validators: HashSet<String> = serde_json::from_str(&validators_data)
+            .expect("Could not parse validators.json");
+
+        println!("✅ Loaded {} trusted validators.", trusted_validators.len());
+
+        let store = peer::PeerStore::new(trusted_validators);
         let server = Router::new()
             .route("/register", post(handler::post_register_handler))
             .route("/peers", get(handler::get_peers_handler))
