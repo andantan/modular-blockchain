@@ -78,7 +78,6 @@ make run ARGS="-k test.hex"
 Located in the project root, `validators.json` defines the validator set in the following format:
 
 ```json
-// examples
 [
   "0xd6ac9a9828d40df537a2e137401ec9e844146032",
   "0x8fbb14f9d1e5584093272ba76114fe8dc454667f",
@@ -115,11 +114,16 @@ GET http://127.0.0.1:51773/random
 
 ## GopherCon Korea 2025
 
+
+
 This project was presented at **GopherCon Korea 2025**, and the demo and materials are being integrated into the migrated repository:
 
 👉 [https://github.com/andantan/kangaroo](https://github.com/andantan/kangaroo)
 
 * **Speaker:** 전규빈(Qbean)
+* **Session:** Go로 밑바닥부터 맨 땅에 헤딩하듯 만드는 P2P 블록체인 네트워크
+* **Conference URL:** [https://gophercon.kr/2025](https://gophercon.kr/2025)
+* **Presentation Slides:** [https://github.com/andantan/GopherCon-Korea-2025-Scripts](https://github.com/andantan/GopherCon-Korea-2025-Scripts)
 * **Presentation materials:** See `docs/` or the presentation section in the migrated repo.
 
 ---
