@@ -6,6 +6,13 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
 	"github.com/andantan/modular-blockchain/core"
 	"github.com/andantan/modular-blockchain/crypto"
 	"github.com/andantan/modular-blockchain/network/api/http"
@@ -16,12 +23,6 @@ import (
 	"github.com/andantan/modular-blockchain/network/synchronizer"
 	"github.com/andantan/modular-blockchain/server"
 	"github.com/andantan/modular-blockchain/util"
-	"log"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-	"time"
 )
 
 func randomPortInRange(min, max uint16) (uint16, error) {
@@ -41,6 +42,8 @@ func randomPortInRange(min, max uint16) (uint16, error) {
 func main() {
 	privKeyFile := flag.String("k", "", "Path to the private key file (e.g., mykey.hex)")
 	flag.Parse()
+
+	// this is for test
 
 	if *privKeyFile == "" {
 		flag.Usage()
